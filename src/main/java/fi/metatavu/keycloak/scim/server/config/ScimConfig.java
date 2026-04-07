@@ -89,4 +89,13 @@ public interface ScimConfig {
      * @return basic auth password hash or null if not configured
      */
     String getBasicAuthPassword();
+
+    /**
+     * Returns whether this configuration is enabled
+     *
+     * @return true if the configuration is enabled
+     */
+    default boolean isEnabled() {
+        return true;
+    }
 }

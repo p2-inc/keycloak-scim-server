@@ -1,6 +1,7 @@
 package fi.metatavu.keycloak.scim.server.organization;
 
 import fi.metatavu.keycloak.scim.server.ScimContext;
+import fi.metatavu.keycloak.scim.server.config.ScimConfig;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;

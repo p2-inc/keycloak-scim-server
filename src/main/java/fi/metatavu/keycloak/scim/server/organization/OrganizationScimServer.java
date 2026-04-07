@@ -2,6 +2,7 @@ package fi.metatavu.keycloak.scim.server.organization;
 
 import fi.metatavu.keycloak.scim.server.AbstractScimServer;
 import fi.metatavu.keycloak.scim.server.config.ConfigurationError;
+import fi.metatavu.keycloak.scim.server.config.ScimConfig;
 import fi.metatavu.keycloak.scim.server.filter.ScimFilter;
 import fi.metatavu.keycloak.scim.server.jacoco.ExcludeFromJacocoGeneratedReport;
 import fi.metatavu.keycloak.scim.server.metadata.UserAttributes;
@@ -13,6 +14,7 @@ import jakarta.ws.rs.InternalServerErrorException;
 import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.core.Response;
 import org.jboss.logging.Logger;
+import org.keycloak.component.ComponentModel;
 import org.keycloak.models.*;
 
 import java.net.URI;
@@ -226,5 +228,27 @@ public abstract class OrganizationScimServer extends AbstractScimServer<Organiza
     }
 
     public abstract OrganizationScimContext getScimContext(KeycloakSession session, String organizationId);
+
+    /**
+     * Loads SCIM configuration from a ComponentModel if one exists for the given organization.
+     * Returns null if no component is found or if the component is disabled.
+     *
+     * @param realm the realm
+     * @param organizationId the organization ID
+     * @return ComponentScimConfig or null
+     */
+    public static ComponentScimConfig loadComponentConfig(RealmModel realm, String organizationId) {
+        ComponentModel component = realm.getComponent(organizationId);
+        if (component == null) {
+            return null;
+        }
+
+        ComponentScimConfig componentConfig = new ComponentScimConfig(component);
+        if (!componentConfig.isEnabled()) {
+            return null;
+        }
+
+        return componentConfig;
+    }
 
 }
