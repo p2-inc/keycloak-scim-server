@@ -24,6 +24,12 @@ public class KeycloakOrganizationScimServerProvider implements OrganizationScimS
   }
 
   @Override
+  public boolean organizationExists(String orgId) {
+    OrganizationProvider orgProvider = session.getProvider(OrganizationProvider.class);
+    return orgProvider.getById(orgId) != null;
+  }
+
+  @Override
   public OrganizationScimServer getScimServer(KeycloakSession session) {
     return new OrganizationScimServer(session) {
       @Override

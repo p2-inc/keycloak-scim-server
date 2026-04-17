@@ -24,10 +24,10 @@ public class ScimResources {
     private final RealmScimServer realmScimServer;
     private final OrganizationScimServer organizationScimServer;
 
-    ScimResources(KeycloakSession session, String organizationType) {
+    ScimResources(KeycloakSession session) {
         scimFilterParser = new ScimFilterParser();
         realmScimServer = new RealmScimServer();
-        organizationScimServer = session.getProvider(OrganizationScimServerProvider.class, organizationType).getScimServer(session);
+        organizationScimServer = session.getProvider(OrganizationScimServerProvider.class).getScimServer(session);
     }
 
     // Realm Server endpoints

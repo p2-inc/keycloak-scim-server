@@ -4,9 +4,7 @@ import org.jboss.logging.Logger;
 import org.keycloak.component.ComponentModel;
 import org.keycloak.component.ComponentValidationException;
 import org.keycloak.models.KeycloakSession;
-import org.keycloak.models.OrganizationModel;
 import org.keycloak.models.RealmModel;
-import org.keycloak.organization.OrganizationProvider;
 import org.keycloak.provider.ProviderConfigProperty;
 import org.keycloak.storage.UserStorageProviderFactory;
 
@@ -59,10 +57,9 @@ public class OrganizationScimConfigProviderFactory implements UserStorageProvide
         }
 
         String orgId = config.getId();
-        OrganizationProvider orgProvider = session.getProvider(OrganizationProvider.class);
-        OrganizationModel organization = orgProvider.getById(orgId);
-
-        if (organization == null) {
+        OrganizationScimServerProvider scimProvider =
+            session.getProvider(OrganizationScimServerProvider.class);
+        if (scimProvider == null || !scimProvider.organizationExists(orgId)) {
             throw new ComponentValidationException(
                 "Organization not found: " + config.getOrganizationId()
             );
