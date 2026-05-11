@@ -7,17 +7,13 @@ import org.keycloak.models.OrganizationModel;
 import org.keycloak.organization.OrganizationProvider;
 import fi.metatavu.keycloak.scim.server.organization.*;
 import java.net.URI;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
 import jakarta.ws.rs.InternalServerErrorException;
 import jakarta.ws.rs.NotFoundException;
-import jakarta.ws.rs.core.Response;
 import fi.metatavu.keycloak.scim.server.config.ConfigurationError;
 
 public class KeycloakOrganizationScimServerProvider implements OrganizationScimServerProvider {
 
-  protected final KeycloakSession session;
+  private final KeycloakSession session;
 
   public KeycloakOrganizationScimServerProvider(KeycloakSession session) {
     this.session = session;
@@ -31,7 +27,7 @@ public class KeycloakOrganizationScimServerProvider implements OrganizationScimS
 
   @Override
   public OrganizationScimServer getScimServer(KeycloakSession session) {
-    return new OrganizationScimServer(session) {
+    return new OrganizationScimServer() {
       @Override
       public OrganizationScimContext getScimContext(KeycloakSession session, String organizationId) {
         return createScimContext(session, organizationId);
