@@ -14,9 +14,13 @@
 
 apply(plugin = "signing")
 
+// `apply(from = ...)` scripts don't get the Java plugin's DSL accessors
+// (e.g. `sourceSets`) injected, so look the extension up by type.
+val mainSourceSet = the<SourceSetContainer>().getByName("main")
+
 val sourcesJar by tasks.registering(Jar::class) {
     archiveClassifier.set("sources")
-    from(sourceSets["main"].allSource)
+    from(mainSourceSet.allSource)
     dependsOn(tasks.named("generateModels"))
 }
 
@@ -80,22 +84,7 @@ afterEvaluate {
         useGpgCmd()
         sign(extensions.getByType<PublishingExtension>().publications["mavenJava"])
     }
-
-    // Configure the nexus-publish plugin (added to plugins{} block by the
-    // release workflow). Provides staging close+release tasks.
-    val nexusExt = extensions.findByName("nexusPublishing")
-    if (nexusExt != null) {
-        @Suppress("UNCHECKED_CAST")
-        val cfg = nexusExt as io.github.gradlenexus.publishplugin.NexusPublishExtension
-        cfg.repositories {
-            sonatype {
-                nexusUrl.set(uri("https://s01.oss.sonatype.org/service/local/"))
-                snapshotRepositoryUrl.set(
-                    uri("https://s01.oss.sonatype.org/content/repositories/snapshots/")
-                )
-                username.set(System.getenv("OSSRH_USERNAME"))
-                password.set(System.getenv("OSSRH_PASSWORD"))
-            }
-        }
-    }
+    // The nexusPublishing { ... } block is appended to build.gradle.kts by
+    // the release workflow (not configured here) so it has access to the
+    // plugin's types via the project's plugins{} classpath.
 }

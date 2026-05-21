@@ -106,14 +106,33 @@ jobs:
             '/^    id("org.sonarqube") version/a\    id("io.github.gradle-nexus.publish-plugin") version "2.0.0"' \
             build.gradle.kts
 
-          # Append the overlay apply line
-          printf '\napply(from = "phasetwo-release.gradle.kts")\n' >> build.gradle.kts
+          # Append the overlay apply line, then the nexusPublishing config.
+          # nexusPublishing has to live in build.gradle.kts (not in the
+          # apply-from script) because that's where the plugin's types are
+          # on the script classpath.
+          cat <<'GRADLE' >> build.gradle.kts
+
+          apply(from = "phasetwo-release.gradle.kts")
+
+          nexusPublishing {
+              repositories {
+                  sonatype {
+                      nexusUrl.set(uri("https://s01.oss.sonatype.org/service/local/"))
+                      snapshotRepositoryUrl.set(
+                          uri("https://s01.oss.sonatype.org/content/repositories/snapshots/")
+                      )
+                      username.set(System.getenv("OSSRH_USERNAME"))
+                      password.set(System.getenv("OSSRH_PASSWORD"))
+                  }
+              }
+          }
+          GRADLE
 
           # Patch gradle.properties version (drop -SNAPSHOT, use 4-part)
           sed -i "s/^version=.*/version=${NEXT_VERSION}/" gradle.properties
 
           echo "--- build.gradle.kts (tail) ---"
-          tail -5 build.gradle.kts
+          tail -20 build.gradle.kts
           echo "--- gradle.properties ---"
           grep -E '^(version|group)=' gradle.properties || true
 
