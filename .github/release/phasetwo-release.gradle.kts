@@ -7,36 +7,34 @@
 //   - Upload + automatic release to the Sonatype Central Portal
 //
 // This overlay covers the rest:
-//   - Drops the upstream "gpr" publication / GitHubPackages repo so it never
-//     gets added to vanniktech's signAllPublications() signing list.
 //   - Wires the signing plugin to use the GPG command-line (vanniktech's
 //     signAllPublications() does not call useGpgCmd() for us).
+//   - Disables every task tied to the upstream "gpr" publication so it
+//     doesn't run as part of the release build. We intentionally do NOT
+//     remove the gpr publication from the publishing container, because
+//     calling publications.findByName("gpr") forces its lazy realization
+//     and downstream re-iteration triggers a duplicate-task-name error.
+//     Leaving the publication lazy and disabling its tasks is safe because
+//     vanniktech's publishAndReleaseToMavenCentral task only depends on
+//     tasks for its own "maven" publication.
 //   - Suppresses the "enforced-platform" validation that would otherwise
 //     reject the upstream `implementation(enforcedPlatform(...))` dep.
 //   - Tells javadoc to be tolerant of missing tags.
 //   - Ensures the sources jar (added by vanniktech's JavaLibrary configuration)
 //     waits for the OpenAPI model generation.
 
-// IMPORTANT: remove the upstream "gpr" publication eagerly — i.e. during
-// script execution, not in afterEvaluate. vanniktech's signAllPublications()
-// schedules sign(publications) which iterates the publications container at
-// the time it runs; if gpr still exists at that point, a signGprPublication
-// task gets created and it has no signatory because vanniktech only
-// configures one for its own "maven" publication.
-extensions.configure<PublishingExtension>("publishing") {
-    publications.findByName("gpr")?.let { publications.remove(it) }
-    repositories.findByName("GitHubPackages")?.let { repositories.remove(it) }
-}
-
-// Defense in depth: even if the publication removal above runs too late for
-// some reason, disable the signing task so it doesn't fail the build.
-tasks.matching { it.name == "signGprPublication" }.configureEach {
-    enabled = false
-}
-
 tasks.named<Javadoc>("javadoc") {
     isFailOnError = false
     (options as? StandardJavadocDocletOptions)?.addStringOption("Xdoclint:none", "-quiet")
+}
+
+// Disable every task associated with the upstream "gpr" / GitHubPackages
+// publication. configureEach is lazy, so this only fires when a matching
+// task actually gets realized.
+tasks.configureEach {
+    if (name.contains("GprPublication") || name.contains("ToGitHubPackagesRepository")) {
+        enabled = false
+    }
 }
 
 afterEvaluate {
