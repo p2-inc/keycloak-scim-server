@@ -100,29 +100,59 @@ jobs:
           # Drop the gradle overlay file into the source tree
           cp "$GITHUB_WORKSPACE/phasetwo-release/.github/release/phasetwo-release.gradle.kts" .
 
-          # Insert the nexus-publish-plugin into the plugins {} block,
-          # anchored on the existing org.sonarqube plugin line.
+          # Inject the vanniktech maven-publish plugin into the plugins {}
+          # block, anchored on the existing org.sonarqube plugin line.
+          # This plugin publishes to Sonatype's Central Portal
+          # (https://central.sonatype.com/), which replaced legacy OSSRH
+          # (sunset June 2025).
           sed -i \
-            '/^    id("org.sonarqube") version/a\    id("io.github.gradle-nexus.publish-plugin") version "2.0.0"' \
+            '/^    id("org.sonarqube") version/a\    id("com.vanniktech.maven.publish") version "0.30.0"' \
             build.gradle.kts
 
-          # Append the overlay apply line, then the nexusPublishing config.
-          # nexusPublishing has to live in build.gradle.kts (not in the
-          # apply-from script) because that's where the plugin's types are
+          # Append overlay apply line, then the mavenPublishing config.
+          # mavenPublishing must live in build.gradle.kts (not in the
+          # apply-from script) because that's where vanniktech's types live
           # on the script classpath.
           cat <<'GRADLE' >> build.gradle.kts
 
           apply(from = "phasetwo-release.gradle.kts")
 
-          nexusPublishing {
-              repositories {
-                  sonatype {
-                      nexusUrl.set(uri("https://s01.oss.sonatype.org/service/local/"))
-                      snapshotRepositoryUrl.set(
-                          uri("https://s01.oss.sonatype.org/content/repositories/snapshots/")
-                      )
-                      username.set(System.getenv("OSSRH_USERNAME"))
-                      password.set(System.getenv("OSSRH_PASSWORD"))
+          mavenPublishing {
+              publishToMavenCentral(
+                  com.vanniktech.maven.publish.SonatypeHost.CENTRAL_PORTAL,
+                  automaticRelease = true
+              )
+              signAllPublications()
+              coordinates(
+                  "io.phasetwo.keycloak",
+                  "keycloak-scim-server",
+                  project.version.toString()
+              )
+              pom {
+                  name.set("Phase Two Keycloak SCIM Server")
+                  description.set(
+                      "Phase Two-maintained build of the Metatavu Keycloak SCIM 2.0 extension."
+                  )
+                  url.set("https://github.com/p2-inc/keycloak-scim-server")
+                  inceptionYear.set("2025")
+                  licenses {
+                      license {
+                          name.set("Apache License 2.0")
+                          url.set("https://www.apache.org/licenses/LICENSE-2.0")
+                          distribution.set("repo")
+                      }
+                  }
+                  developers {
+                      developer {
+                          id.set("phasetwo")
+                          name.set("Phase Two, Inc.")
+                          url.set("https://github.com/p2-inc")
+                      }
+                  }
+                  scm {
+                      connection.set("scm:git:git@github.com:p2-inc/keycloak-scim-server.git")
+                      developerConnection.set("scm:git:git@github.com:p2-inc/keycloak-scim-server.git")
+                      url.set("https://github.com/p2-inc/keycloak-scim-server")
                   }
               }
           }
@@ -140,18 +170,21 @@ jobs:
         if: steps.version.outputs.skip != 'true' || github.event.inputs.force == 'true'
         working-directory: source
         env:
-          OSSRH_USERNAME: ${{ secrets.OSSRH_USERNAME }}
-          OSSRH_PASSWORD: ${{ secrets.OSSRH_PASSWORD }}
-          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ env.GPG_KEY_ID }}
+          # vanniktech maven-publish reads these gradle properties for Central
+          # Portal Basic auth. ORG_GRADLE_PROJECT_<name> is Gradle's standard
+          # env-to-property mapping. The values must be Central Portal User
+          # Tokens generated at https://central.sonatype.com/account, NOT
+          # legacy Sonatype JIRA credentials.
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.OSSRH_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.OSSRH_PASSWORD }}
         run: |
-          # --no-configuration-cache: the nexus-publish-plugin tasks are not
+          # --no-configuration-cache: vanniktech publish tasks are not
           # config-cache compatible, and upstream enables the cache in
           # gradle.properties (org.gradle.configuration-cache=true).
           ./gradlew --no-daemon --no-configuration-cache \
             -Psigning.gnupg.executable=gpg \
             -Psigning.gnupg.keyName="${GPG_KEY_ID}" \
-            publishMavenJavaPublicationToSonatypeRepository \
-            closeAndReleaseSonatypeStagingRepository
+            publishAndReleaseToMavenCentral
 
       - name: Configure SSH for tag push
         if: steps.version.outputs.skip != 'true' || github.event.inputs.force == 'true'
