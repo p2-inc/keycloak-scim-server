@@ -144,7 +144,10 @@ jobs:
           OSSRH_PASSWORD: ${{ secrets.OSSRH_PASSWORD }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ env.GPG_KEY_ID }}
         run: |
-          ./gradlew --no-daemon \
+          # --no-configuration-cache: the nexus-publish-plugin tasks are not
+          # config-cache compatible, and upstream enables the cache in
+          # gradle.properties (org.gradle.configuration-cache=true).
+          ./gradlew --no-daemon --no-configuration-cache \
             -Psigning.gnupg.executable=gpg \
             -Psigning.gnupg.keyName="${GPG_KEY_ID}" \
             publishMavenJavaPublicationToSonatypeRepository \

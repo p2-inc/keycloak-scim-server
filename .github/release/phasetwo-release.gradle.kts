@@ -84,6 +84,13 @@ afterEvaluate {
         useGpgCmd()
         sign(extensions.getByType<PublishingExtension>().publications["mavenJava"])
     }
+
+    // Upstream uses implementation(enforcedPlatform("org.keycloak.bom:...")) which
+    // would leak forced versions to consumers via the published Gradle module
+    // metadata. Suppress the validation so the publication metadata generates.
+    tasks.withType<org.gradle.api.publish.tasks.GenerateModuleMetadata>().configureEach {
+        suppressedValidationErrors.add("enforced-platform")
+    }
     // The nexusPublishing { ... } block is appended to build.gradle.kts by
     // the release workflow (not configured here) so it has access to the
     // plugin's types via the project's plugins{} classpath.
