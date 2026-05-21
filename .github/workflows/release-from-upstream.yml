@@ -64,8 +64,26 @@ jobs:
       - name: Import GPG signing key
         if: steps.version.outputs.skip != 'true' || github.event.inputs.force == 'true'
         run: |
-          echo "$GPG_KEY" | gpg --batch --import
-          KEY_ID=$(gpg --list-secret-keys --with-colons | awk -F: '/^sec:/ {print $5; exit}')
+          set -euo pipefail
+
+          # The org-level GPG_KEY secret is base64-encoded (same convention as
+          # qcastel/github-actions-maven-release in keycloak-orgs). Try the
+          # base64-decoded form first; fall back to importing it raw.
+          if echo "$GPG_KEY" | base64 --decode 2>/dev/null \
+               | gpg --batch --import 2>/tmp/gpg-import.log; then
+            echo "Imported base64-decoded GPG key."
+          else
+            cat /tmp/gpg-import.log || true
+            echo "base64 decode/import failed — trying direct import."
+            printf '%s\n' "$GPG_KEY" | gpg --batch --import
+          fi
+
+          KEY_ID=$(gpg --list-secret-keys --with-colons \
+                     | awk -F: '/^sec:/ {print $5; exit}')
+          if [ -z "$KEY_ID" ]; then
+            echo "Failed to determine imported GPG key ID." >&2
+            exit 1
+          fi
           echo "Imported GPG key: $KEY_ID"
           echo "GPG_KEY_ID=$KEY_ID" >> "$GITHUB_ENV"
         env:
