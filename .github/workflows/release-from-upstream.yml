@@ -1,0 +1,155 @@
+name: Release from upstream
+
+# Polls Metatavu/keycloak-scim-server's develop branch, computes the next
+# Phase Two release version (vX.Y.Z.N), and publishes a Maven Central
+# release under io.phasetwo.keycloak:keycloak-scim-server:X.Y.Z.N.
+
+on:
+  schedule:
+    # Daily at 04:00 UTC
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Release even if upstream HEAD is already tagged"
+        required: false
+        default: "false"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout phasetwo-release branch (release tooling)
+        uses: actions/checkout@v4
+        with:
+          ref: phasetwo-release
+          path: phasetwo-release
+
+      - name: Checkout Metatavu/keycloak-scim-server develop (source)
+        uses: actions/checkout@v4
+        with:
+          repository: Metatavu/keycloak-scim-server
+          ref: develop
+          path: source
+          fetch-depth: 0
+
+      - name: Add p2-inc fork remote and fetch its release tags
+        working-directory: source
+        run: |
+          git remote add p2inc https://github.com/p2-inc/keycloak-scim-server.git
+          # Only fetch tags, not branches — branches may diverge from upstream
+          git fetch p2inc 'refs/tags/v*:refs/tags/v*' --no-recurse-submodules
+
+      - name: Compute next version
+        id: version
+        working-directory: source
+        run: bash "$GITHUB_WORKSPACE/phasetwo-release/.github/release/version.sh"
+
+      - name: Skip if already released (and not forced)
+        if: steps.version.outputs.skip == 'true' && github.event.inputs.force != 'true'
+        run: |
+          echo "Upstream HEAD ${{ steps.version.outputs.head_sha }} already has a Phase Two release tag. Nothing to do."
+
+      - name: Set up Java 21
+        if: steps.version.outputs.skip != 'true' || github.event.inputs.force == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Import GPG signing key
+        if: steps.version.outputs.skip != 'true' || github.event.inputs.force == 'true'
+        run: |
+          echo "$GPG_KEY" | gpg --batch --import
+          KEY_ID=$(gpg --list-secret-keys --with-colons | awk -F: '/^sec:/ {print $5; exit}')
+          echo "Imported GPG key: $KEY_ID"
+          echo "GPG_KEY_ID=$KEY_ID" >> "$GITHUB_ENV"
+        env:
+          GPG_KEY: ${{ secrets.GPG_KEY }}
+
+      - name: Apply Phase Two release overlay
+        if: steps.version.outputs.skip != 'true' || github.event.inputs.force == 'true'
+        working-directory: source
+        env:
+          NEXT_VERSION: ${{ steps.version.outputs.next_version }}
+        run: |
+          set -euo pipefail
+
+          # Drop the gradle overlay file into the source tree
+          cp "$GITHUB_WORKSPACE/phasetwo-release/.github/release/phasetwo-release.gradle.kts" .
+
+          # Insert the nexus-publish-plugin into the plugins {} block,
+          # anchored on the existing org.sonarqube plugin line.
+          sed -i \
+            '/^    id("org.sonarqube") version/a\    id("io.github.gradle-nexus.publish-plugin") version "2.0.0"' \
+            build.gradle.kts
+
+          # Append the overlay apply line
+          printf '\napply(from = "phasetwo-release.gradle.kts")\n' >> build.gradle.kts
+
+          # Patch gradle.properties version (drop -SNAPSHOT, use 4-part)
+          sed -i "s/^version=.*/version=${NEXT_VERSION}/" gradle.properties
+
+          echo "--- build.gradle.kts (tail) ---"
+          tail -5 build.gradle.kts
+          echo "--- gradle.properties ---"
+          grep -E '^(version|group)=' gradle.properties || true
+
+      - name: Build, sign, and publish to Maven Central
+        if: steps.version.outputs.skip != 'true' || github.event.inputs.force == 'true'
+        working-directory: source
+        env:
+          OSSRH_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          OSSRH_PASSWORD: ${{ secrets.OSSRH_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ env.GPG_KEY_ID }}
+        run: |
+          ./gradlew --no-daemon \
+            -Psigning.gnupg.executable=gpg \
+            -Psigning.gnupg.keyName="${GPG_KEY_ID}" \
+            publishMavenJavaPublicationToSonatypeRepository \
+            closeAndReleaseSonatypeStagingRepository
+
+      - name: Configure SSH for tag push
+        if: steps.version.outputs.skip != 'true' || github.event.inputs.force == 'true'
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Tag and push to p2-inc fork
+        if: steps.version.outputs.skip != 'true' || github.event.inputs.force == 'true'
+        working-directory: source
+        env:
+          NEXT_VERSION: ${{ steps.version.outputs.next_version }}
+          HEAD_SHA: ${{ steps.version.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "phasetwo-bot"
+          git config user.email "support@phasetwo.io"
+
+          # Tag the upstream HEAD commit
+          TAG="v${NEXT_VERSION}"
+          git tag -a "$TAG" "$HEAD_SHA" -m "Phase Two release ${TAG} (from upstream ${HEAD_SHA})"
+
+          # Push tag to p2-inc fork over SSH
+          git remote set-url p2inc git@github.com:p2-inc/keycloak-scim-server.git
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no" \
+            git push p2inc "$TAG"
+
+      - name: Summary
+        if: steps.version.outputs.skip != 'true' || github.event.inputs.force == 'true'
+        run: |
+          {
+            echo "## Phase Two release"
+            echo ""
+            echo "- Upstream commit: \`${{ steps.version.outputs.head_sha }}\`"
+            echo "- Released version: \`${{ steps.version.outputs.next_version }}\`"
+            echo "- Coordinates: \`io.phasetwo.keycloak:keycloak-scim-server:${{ steps.version.outputs.next_version }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
