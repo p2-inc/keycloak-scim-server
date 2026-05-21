@@ -188,11 +188,38 @@ jobs:
 
       - name: Configure SSH for tag push
         if: steps.version.outputs.skip != 'true' || github.event.inputs.force == 'true'
+        env:
+          # Pass via env (not direct workflow interpolation) so embedded
+          # newlines in the secret are preserved as-is. Workflow expressions
+          # can mangle multi-line values.
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
+          set -euo pipefail
+
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+
+          # printf '%s\n' preserves all internal newlines AND guarantees a
+          # trailing newline (SSH/OpenSSL requires one after the END marker).
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
+
+          # Validate the key parses; if not, try a base64 decode in case the
+          # secret was stored encoded.
+          if ! ssh-keygen -y -P "" -f ~/.ssh/id_ed25519 >/dev/null 2>&1; then
+            echo "Direct key didn't parse — trying base64 decode."
+            printf '%s' "$SSH_PRIVATE_KEY" | base64 -d > ~/.ssh/id_ed25519 2>/dev/null || true
+            chmod 600 ~/.ssh/id_ed25519
+            if ! ssh-keygen -y -P "" -f ~/.ssh/id_ed25519 >/dev/null 2>&1; then
+              echo "SSH_PRIVATE_KEY secret could not be parsed in either" \
+                   "direct or base64 form. Check the secret value." >&2
+              exit 1
+            fi
+            echo "Imported base64-decoded SSH key."
+          else
+            echo "Imported SSH key directly."
+          fi
+
           ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
 
       - name: Tag and push to p2-inc fork
