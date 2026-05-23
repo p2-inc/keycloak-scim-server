@@ -186,83 +186,33 @@ jobs:
             -Psigning.gnupg.keyName="${GPG_KEY_ID}" \
             publishAndReleaseToMavenCentral
 
-      - name: Configure SSH for tag push
-        if: steps.version.outputs.skip != 'true' || github.event.inputs.force == 'true'
-        env:
-          # Pass via env (not direct workflow interpolation) so embedded
-          # newlines in the secret are preserved as-is. Workflow expressions
-          # can mangle multi-line values.
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-        run: |
-          set -euo pipefail
-
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-
-          write_key() {
-              # Use printf '%s\n' to preserve internal newlines AND guarantee a
-              # trailing newline (SSH/OpenSSL requires one after the END marker).
-              printf '%s\n' "$1" > ~/.ssh/id_ed25519
-              chmod 600 ~/.ssh/id_ed25519
-          }
-
-          # ssh-keygen -l -f reads only the public part embedded in the OpenSSH
-          # private-key file; works for passphrase-protected keys too. If this
-          # succeeds the file is structurally a valid SSH key.
-          validate_key() {
-              ssh-keygen -l -f ~/.ssh/id_ed25519 >/dev/null 2>&1
-          }
-
-          # First try: write the secret value as-is.
-          write_key "$SSH_PRIVATE_KEY"
-
-          if ! validate_key; then
-              echo "Direct write produced an unparseable key — trying base64 decode."
-              if DECODED=$(printf '%s' "$SSH_PRIVATE_KEY" | base64 -d 2>/dev/null); then
-                  write_key "$DECODED"
-              fi
-          fi
-
-          if ! validate_key; then
-              echo "::error::SSH_PRIVATE_KEY secret could not be parsed as an SSH" \
-                   "private key in either direct or base64 form." >&2
-              echo "Diagnostic info (the key value itself is masked):" >&2
-              echo "  Byte count of secret: $(printf '%s' "$SSH_PRIVATE_KEY" | wc -c)" >&2
-              echo "  Line count of secret: $(printf '%s\n' "$SSH_PRIVATE_KEY" | wc -l)" >&2
-              echo "  File size on disk:    $(wc -c < ~/.ssh/id_ed25519)" >&2
-              echo "  First/last line markers:" >&2
-              head -1 ~/.ssh/id_ed25519 | sed 's/./X/g; s/X\{5,\}/[redacted]/' >&2
-              tail -1 ~/.ssh/id_ed25519 | sed 's/./X/g; s/X\{5,\}/[redacted]/' >&2
-              echo "  ssh-keygen verbose output:" >&2
-              ssh-keygen -l -f ~/.ssh/id_ed25519 2>&1 | sed 's/./X/g' >&2 || true
-              exit 1
-          fi
-
-          echo "SSH key fingerprint (safe to log):"
-          ssh-keygen -l -f ~/.ssh/id_ed25519
-
-          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
-
       - name: Tag and push to p2-inc fork
         if: steps.version.outputs.skip != 'true' || github.event.inputs.force == 'true'
         working-directory: source
         env:
           NEXT_VERSION: ${{ steps.version.outputs.next_version }}
           HEAD_SHA: ${{ steps.version.outputs.head_sha }}
+          # The workflow runs inside p2-inc/keycloak-scim-server, and the
+          # job declares permissions: contents: write at the top of the
+          # file, so the automatically-provisioned GITHUB_TOKEN has push
+          # access to this repo. No SSH key needed.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
           git config user.name "phasetwo-bot"
           git config user.email "support@phasetwo.io"
 
-          # Tag the upstream HEAD commit
           TAG="v${NEXT_VERSION}"
-          git tag -a "$TAG" "$HEAD_SHA" -m "Phase Two release ${TAG} (from upstream ${HEAD_SHA})"
+          git tag -a "$TAG" "$HEAD_SHA" \
+            -m "Phase Two release ${TAG} (from upstream ${HEAD_SHA})"
 
-          # Push tag to p2-inc fork over SSH
-          git remote set-url p2inc git@github.com:p2-inc/keycloak-scim-server.git
-          GIT_SSH_COMMAND="ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no" \
-            git push p2inc "$TAG"
+          # Push the tag via HTTPS using the workflow's GITHUB_TOKEN.
+          # x-access-token is GitHub's documented user-name for token-based
+          # Basic auth against api.github.com / *.git.
+          git remote set-url p2inc \
+            "https://x-access-token:${GH_TOKEN}@github.com/p2-inc/keycloak-scim-server.git"
+          git push p2inc "$TAG"
 
       - name: Summary
         if: steps.version.outputs.skip != 'true' || github.event.inputs.force == 'true'
