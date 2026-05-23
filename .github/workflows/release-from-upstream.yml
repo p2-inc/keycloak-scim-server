@@ -199,26 +199,47 @@ jobs:
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
 
-          # printf '%s\n' preserves all internal newlines AND guarantees a
-          # trailing newline (SSH/OpenSSL requires one after the END marker).
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
+          write_key() {
+              # Use printf '%s\n' to preserve internal newlines AND guarantee a
+              # trailing newline (SSH/OpenSSL requires one after the END marker).
+              printf '%s\n' "$1" > ~/.ssh/id_ed25519
+              chmod 600 ~/.ssh/id_ed25519
+          }
 
-          # Validate the key parses; if not, try a base64 decode in case the
-          # secret was stored encoded.
-          if ! ssh-keygen -y -P "" -f ~/.ssh/id_ed25519 >/dev/null 2>&1; then
-            echo "Direct key didn't parse — trying base64 decode."
-            printf '%s' "$SSH_PRIVATE_KEY" | base64 -d > ~/.ssh/id_ed25519 2>/dev/null || true
-            chmod 600 ~/.ssh/id_ed25519
-            if ! ssh-keygen -y -P "" -f ~/.ssh/id_ed25519 >/dev/null 2>&1; then
-              echo "SSH_PRIVATE_KEY secret could not be parsed in either" \
-                   "direct or base64 form. Check the secret value." >&2
-              exit 1
-            fi
-            echo "Imported base64-decoded SSH key."
-          else
-            echo "Imported SSH key directly."
+          # ssh-keygen -l -f reads only the public part embedded in the OpenSSH
+          # private-key file; works for passphrase-protected keys too. If this
+          # succeeds the file is structurally a valid SSH key.
+          validate_key() {
+              ssh-keygen -l -f ~/.ssh/id_ed25519 >/dev/null 2>&1
+          }
+
+          # First try: write the secret value as-is.
+          write_key "$SSH_PRIVATE_KEY"
+
+          if ! validate_key; then
+              echo "Direct write produced an unparseable key — trying base64 decode."
+              if DECODED=$(printf '%s' "$SSH_PRIVATE_KEY" | base64 -d 2>/dev/null); then
+                  write_key "$DECODED"
+              fi
           fi
+
+          if ! validate_key; then
+              echo "::error::SSH_PRIVATE_KEY secret could not be parsed as an SSH" \
+                   "private key in either direct or base64 form." >&2
+              echo "Diagnostic info (the key value itself is masked):" >&2
+              echo "  Byte count of secret: $(printf '%s' "$SSH_PRIVATE_KEY" | wc -c)" >&2
+              echo "  Line count of secret: $(printf '%s\n' "$SSH_PRIVATE_KEY" | wc -l)" >&2
+              echo "  File size on disk:    $(wc -c < ~/.ssh/id_ed25519)" >&2
+              echo "  First/last line markers:" >&2
+              head -1 ~/.ssh/id_ed25519 | sed 's/./X/g; s/X\{5,\}/[redacted]/' >&2
+              tail -1 ~/.ssh/id_ed25519 | sed 's/./X/g; s/X\{5,\}/[redacted]/' >&2
+              echo "  ssh-keygen verbose output:" >&2
+              ssh-keygen -l -f ~/.ssh/id_ed25519 2>&1 | sed 's/./X/g' >&2 || true
+              exit 1
+          fi
+
+          echo "SSH key fingerprint (safe to log):"
+          ssh-keygen -l -f ~/.ssh/id_ed25519
 
           ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
 
